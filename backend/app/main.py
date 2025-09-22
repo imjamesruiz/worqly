@@ -4,7 +4,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import init_db
-from app.routers import auth, workflows, integrations, executions, oauth, password_reset
+from app.routers import auth, workflows, integrations, executions, oauth, password_reset, workflow_execution, webhooks
 import logging
 from typing import List
 from contextlib import asynccontextmanager
@@ -40,6 +40,10 @@ def _resolve_cors_origins() -> List[str]:
     return [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
@@ -62,6 +66,8 @@ if not settings.DEBUG:
 # Include routers with proper prefixes
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
+app.include_router(workflow_execution.router, prefix="/api/v1", tags=["workflow-execution"])
+app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
 app.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
 app.include_router(executions.router, prefix="/executions", tags=["executions"])
 app.include_router(oauth.router, prefix="/oauth", tags=["oauth"])

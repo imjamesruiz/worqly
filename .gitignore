@@ -1,0 +1,7 @@
+# Frontend and backend env files
+frontend/.env
+backend/.env
+
+# Also ignore any local overrides
+*.env.local
+.env

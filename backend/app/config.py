@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./worqly.db"
     
     # Redis Configuration
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: str = "6379"
     REDIS_URL: str = "redis://localhost:6379"
     
     # Celery Configuration
@@ -60,10 +62,14 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Worqly"
     
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3002,http://127.0.0.1:3002,http://localhost:5173,http://127.0.0.1:5173"
     BACKEND_CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
@@ -81,6 +87,13 @@ class Settings(BaseSettings):
     VITE_API_BASE_URL: str = "http://localhost:8000/api/v1"
     DEBUG: bool = True
     
+    # Email Configuration
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASS: Optional[str] = None
+    FRONTEND_URL: str = "http://localhost:3000"
+    
     # Monitoring
     GRAFANA_PASSWORD: Optional[str] = None
     
@@ -95,6 +108,13 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore"
     )
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Build Redis URLs dynamically based on environment
+        self.REDIS_URL = f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
+        self.CELERY_BROKER_URL = f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+        self.CELERY_RESULT_BACKEND = f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
 
     # Accept both JSON list (e.g., ["http://..."]) and comma-separated string for BACKEND_CORS_ORIGINS
     @v2_field_validator("BACKEND_CORS_ORIGINS", mode="before")

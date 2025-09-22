@@ -13,27 +13,32 @@ class EmailService:
     def send_password_reset_email(email: str, verification_code: str, expires_in_minutes: int = 15) -> bool:
         """Send password reset verification code email"""
         try:
-            # For development, we'll use a simple console output
-            # In production, you'd configure SMTP settings
-            if settings.ENVIRONMENT == "development":
+            # Check if SMTP is configured
+            if not all([settings.SMTP_HOST, settings.SMTP_USER, settings.SMTP_PASS]):
+                # Fallback to console output if SMTP not configured
                 print(f"\n{'='*60}")
-                print(f"📧 PASSWORD RESET EMAIL (Development Mode)")
+                print(f"📧 PASSWORD RESET EMAIL (SMTP Not Configured)")
                 print(f"{'='*60}")
                 print(f"To: {email}")
                 print(f"Subject: Password Reset Verification Code")
                 print(f"{'='*60}")
                 print(f"Your password reset verification code is: {verification_code}")
                 print(f"This code will expire in {expires_in_minutes} minutes.")
+                print(f"{'='*60}")
+                print(f"To enable real email sending, configure SMTP settings in your .env file:")
+                print(f"SMTP_HOST={settings.SMTP_HOST or 'smtp.gmail.com'}")
+                print(f"SMTP_PORT={settings.SMTP_PORT}")
+                print(f"SMTP_USER=your_email@gmail.com")
+                print(f"SMTP_PASS=your_app_password")
                 print(f"{'='*60}\n")
                 return True
             
-            # Production email sending (configure your SMTP settings)
-            else:
-                return EmailService._send_smtp_email(
-                    to_email=email,
-                    subject="Password Reset Verification Code",
-                    html_content=EmailService._get_password_reset_html(verification_code, expires_in_minutes)
-                )
+            # Send real email via SMTP
+            return EmailService._send_smtp_email(
+                to_email=email,
+                subject="Password Reset Verification Code",
+                html_content=EmailService._get_password_reset_html(verification_code, expires_in_minutes)
+            )
                 
         except Exception as e:
             print(f"Failed to send email: {e}")
@@ -41,26 +46,17 @@ class EmailService:
     
     @staticmethod
     def _send_smtp_email(to_email: str, subject: str, html_content: str) -> bool:
-        """Send email via SMTP (configure for production)"""
+        """Send email via SMTP"""
         try:
-            # Configure your SMTP settings here
-            smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-            smtp_port = int(os.getenv("SMTP_PORT", "587"))
-            smtp_username = os.getenv("SMTP_USERNAME")
-            smtp_password = os.getenv("SMTP_PASSWORD")
+            # Use settings from config
+            smtp_server = settings.SMTP_HOST
+            smtp_port = settings.SMTP_PORT
+            smtp_username = settings.SMTP_USER
+            smtp_password = settings.SMTP_PASS
             
-            if not all([smtp_username, smtp_password]):
-                print("SMTP credentials not configured. Using development mode.")
-                # Just print the email content instead of recursive call
-                print(f"\n{'='*60}")
-                print(f"📧 PASSWORD RESET EMAIL (Development Mode)")
-                print(f"{'='*60}")
-                print(f"To: {to_email}")
-                print(f"Subject: {subject}")
-                print(f"{'='*60}")
-                print(f"HTML Content: {html_content[:100]}...")
-                print(f"{'='*60}\n")
-                return True
+            print(f"📧 Sending email via SMTP to {to_email}")
+            print(f"SMTP Server: {smtp_server}:{smtp_port}")
+            print(f"SMTP User: {smtp_username}")
             
             # Create message
             msg = MIMEMultipart('alternative')
@@ -78,10 +74,11 @@ class EmailService:
                 server.login(smtp_username, smtp_password)
                 server.send_message(msg)
             
+            print(f"✅ Email sent successfully to {to_email}")
             return True
             
         except Exception as e:
-            print(f"SMTP email failed: {e}")
+            print(f"❌ SMTP email failed: {e}")
             return False
     
     @staticmethod

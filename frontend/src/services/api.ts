@@ -23,6 +23,16 @@ const refreshApi = axios.create({
   withCredentials: true,
 })
 
+// Create a separate axios instance for password reset (no /api/v1 prefix)
+const passwordResetApi = axios.create({
+  baseURL: 'http://localhost:8000',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  withCredentials: true,
+})
+
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
@@ -94,6 +104,13 @@ export const authAPI = {
     return refreshApi.post('/auth/refresh', {})
   },
   logout: () => api.post('/auth/logout'),
+}
+
+export const passwordResetAPI = {
+  requestReset: (email: string) => passwordResetApi.post('/password-reset/request', { email }),
+  verifyCode: (email: string, verification_code: string) => passwordResetApi.post('/password-reset/verify', { email, verification_code }),
+  confirmReset: (email: string, verification_code: string, new_password: string, confirm_password: string) => 
+    passwordResetApi.post('/password-reset/confirm', { email, verification_code, new_password, confirm_password }),
 }
 
 export const workflowAPI = {

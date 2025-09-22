@@ -1,12 +1,20 @@
+import os
 from celery import Celery
 from app.config import settings
 
-# Create Celery instance
+# Create Celery instance with environment-based configuration
 celery_app = Celery(
     "worqly",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.core.tasks"]
+    include=[
+        "app.core.tasks",
+        "app.tasks.gmail_tasks",
+        "app.tasks.slack_tasks", 
+        "app.tasks.http_tasks",
+        "app.tasks.data_tasks",
+        "app.services.monitoring"
+    ]
 )
 
 # Celery configuration
@@ -30,6 +38,14 @@ celery_app.conf.update(
         "refresh-oauth-tokens": {
             "task": "app.core.tasks.refresh_oauth_tokens",
             "schedule": 1800.0,  # Every 30 minutes
+        },
+        "cleanup-old-logs": {
+            "task": "app.services.monitoring.cleanup_old_logs",
+            "schedule": 86400.0,  # Every 24 hours
+        },
+        "health-check": {
+            "task": "app.services.monitoring.health_check_task",
+            "schedule": 300.0,  # Every 5 minutes
         },
     }
 )

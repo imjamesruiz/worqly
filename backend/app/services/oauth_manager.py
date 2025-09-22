@@ -88,7 +88,31 @@ class OAuthManager:
             self.db.commit()
             return False
     
-    def get_valid_token(self, integration_id: int) -> Optional[OAuthToken]:
+    def get_valid_token(self, user_id: int, service: str) -> Optional[Dict[str, Any]]:
+        """Get a valid OAuth token for a user and service"""
+        token = self.db.query(OAuthToken).join(OAuthToken.integration).filter(
+            OAuthToken.user_id == user_id,
+            OAuthToken.integration.has(provider=service),
+            OAuthToken.is_valid == True
+        ).first()
+        
+        if not token:
+            return None
+        
+        # Check if token is expired or about to expire
+        if token.expires_at and token.expires_at < datetime.utcnow() + timedelta(minutes=5):
+            if not self.refresh_token(token):
+                return None
+        
+        return {
+            "access_token": token.access_token,
+            "refresh_token": token.refresh_token,
+            "token_type": token.token_type,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            "scope": token.scope
+        }
+    
+    def get_valid_token_by_integration(self, integration_id: int) -> Optional[OAuthToken]:
         """Get a valid OAuth token for an integration"""
         token = self.db.query(OAuthToken).filter(
             OAuthToken.integration_id == integration_id,
