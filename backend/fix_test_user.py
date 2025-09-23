@@ -1,55 +1,39 @@
 #!/usr/bin/env python3
 """
-Script to fix the test user's password
+Fix test user password
 """
-import sqlite3
+import sys
 import os
-from passlib.context import CryptContext
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from app.database import SessionLocal
+from app.models.user import User
+from app.auth.security import get_password_hash
 
 def fix_test_user():
-    """Fix the test user's password"""
-    print("Fixing test user password...")
-    
-    db_path = "worqly.db"
-    
-    if not os.path.exists(db_path):
-        print(f"✗ Database file {db_path} not found")
-        return
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    """Fix test user password"""
+    db = SessionLocal()
     
     try:
-        # Update test user password
-        new_password_hash = pwd_context.hash("password123")
-        cursor.execute(
-            "UPDATE users SET hashed_password = ? WHERE email = ?",
-            (new_password_hash, "test@example.com")
-        )
-        
-        if cursor.rowcount > 0:
-            print("✓ Test user password updated successfully")
-            
-            # Verify the update
-            cursor.execute("SELECT hashed_password FROM users WHERE email = ?", ("test@example.com",))
-            result = cursor.fetchone()
-            if result and pwd_context.verify("password123", result[0]):
-                print("✓ Password verification confirmed")
-            else:
-                print("✗ Password verification failed after update")
+        # Find existing user
+        user = db.query(User).filter(User.email == "test@example.com").first()
+        if user:
+            # Update password and verification status
+            user.hashed_password = get_password_hash("testpassword123")
+            user.is_verified = True
+            user.is_active = True
+            print(f"User verification status: {user.is_verified}")
+            db.commit()
+            print("✅ Test user password updated")
+            print("Email: test@example.com")
+            print("Password: testpassword123")
         else:
-            print("✗ Test user not found or no changes made")
-        
-        conn.commit()
-        
+            print("❌ User not found")
     except Exception as e:
-        print(f"✗ Error fixing test user: {e}")
-        conn.rollback()
+        print(f"❌ Error: {e}")
+        db.rollback()
     finally:
-        conn.close()
+        db.close()
 
 if __name__ == "__main__":
     fix_test_user()

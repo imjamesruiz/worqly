@@ -20,8 +20,9 @@ class PasswordResetService:
     
     @staticmethod
     def generate_reset_token() -> str:
-        """Generate a secure reset token"""
-        return secrets.token_urlsafe(32)
+        """Generate a secure password reset token with clear prefix"""
+        token = secrets.token_urlsafe(32)
+        return f"reset_{token}"
     
     @staticmethod
     def create_reset_token(db: Session, email: str, expires_in_minutes: int = 15) -> Optional[PasswordResetToken]:

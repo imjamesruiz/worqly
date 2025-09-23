@@ -1,16 +1,133 @@
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.services.oauth_manager import OAuthManager
+from app.services.integrations.base_integration import BaseIntegration, integration_registry
+from app.models.integration import Integration, OAuthToken
+from app.models.workflow import WorkflowNode
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 
 
-class SheetsService:
+class SheetsService(BaseIntegration):
     """Google Sheets integration service for reading and updating spreadsheets"""
     
     def __init__(self, db: Session):
-        self.db = db
+        super().__init__(db)
         self.oauth_manager = OAuthManager(db)
+        self.oauth_required = True
+        self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
+    
+    def get_provider_name(self) -> str:
+        return "sheets"
+    
+    def get_available_actions(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "type": "read_sheet",
+                "name": "Read Sheet",
+                "description": "Read data from a Google Sheets spreadsheet",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet_id": {"type": "string", "title": "Spreadsheet ID", "description": "Google Sheets spreadsheet ID"},
+                        "range_name": {"type": "string", "title": "Range", "description": "Sheet range (e.g., A1:Z1000)"},
+                        "has_headers": {"type": "boolean", "title": "Has Headers", "description": "Whether the first row contains headers"}
+                    },
+                    "required": ["spreadsheet_id"]
+                }
+            },
+            {
+                "type": "update_sheet",
+                "name": "Update Sheet",
+                "description": "Update data in a Google Sheets spreadsheet",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet_id": {"type": "string", "title": "Spreadsheet ID", "description": "Google Sheets spreadsheet ID"},
+                        "range_name": {"type": "string", "title": "Range", "description": "Sheet range to update"},
+                        "data": {"type": "array", "title": "Data", "description": "Data to write to the sheet"}
+                    },
+                    "required": ["spreadsheet_id", "data"]
+                }
+            },
+            {
+                "type": "append_to_sheet",
+                "name": "Append to Sheet",
+                "description": "Append data to a Google Sheets spreadsheet",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet_id": {"type": "string", "title": "Spreadsheet ID", "description": "Google Sheets spreadsheet ID"},
+                        "range_name": {"type": "string", "title": "Range", "description": "Sheet range to append to"},
+                        "data": {"type": "array", "title": "Data", "description": "Data to append to the sheet"}
+                    },
+                    "required": ["spreadsheet_id", "data"]
+                }
+            }
+        ]
+    
+    def get_available_triggers(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "type": "sheet_updated",
+                "name": "Sheet Updated",
+                "description": "Trigger when a Google Sheets spreadsheet is updated",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet_id": {"type": "string", "title": "Spreadsheet ID", "description": "Google Sheets spreadsheet ID to monitor"},
+                        "range_name": {"type": "string", "title": "Range", "description": "Specific range to monitor"}
+                    },
+                    "required": ["spreadsheet_id"]
+                }
+            }
+        ]
+    
+    def execute_action(self, action_type: str, config: Dict[str, Any], input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute Google Sheets action"""
+        try:
+            if action_type == "read_sheet":
+                return self.read_sheet(config)
+            elif action_type == "update_sheet":
+                return self.update_sheet(config, input_data)
+            elif action_type == "append_to_sheet":
+                return self.append_to_sheet(config, input_data)
+            else:
+                raise ValueError(f"Unknown Sheets action: {action_type}")
+        except Exception as e:
+            return self.handle_error(e)
+    
+    def test_connection(self, integration: Integration) -> Dict[str, Any]:
+        """Test Google Sheets connection"""
+        try:
+            # Get OAuth token
+            token = self.get_oauth_token(integration.user_id, integration.id)
+            if not token:
+                return {"success": False, "error": "No valid OAuth token found"}
+            
+            # Test by getting user's spreadsheets
+            credentials = Credentials(
+                token.access_token,
+                refresh_token=token.refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=integration.config.get("client_id"),
+                client_secret=integration.config.get("client_secret")
+            )
+            
+            service = build('sheets', 'v4', credentials=credentials)
+            
+            # Test with a simple request
+            result = service.spreadsheets().get(
+                spreadsheetId="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"  # Sample spreadsheet
+            ).execute()
+            
+            return {
+                "success": True,
+                "title": result.get('properties', {}).get('title'),
+                "sheets_count": len(result.get('sheets', []))
+            }
+        except Exception as e:
+            return self.handle_error(e)
     
     def read_sheet(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Read data from Google Sheets"""
@@ -293,4 +410,8 @@ class SheetsService:
             }
             
         except Exception as e:
-            return {"status": "error", "message": str(e)} 
+            return {"status": "error", "message": str(e)}
+
+
+# Register the integration
+integration_registry.register(SheetsService) 

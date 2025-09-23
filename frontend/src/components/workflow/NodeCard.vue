@@ -1,181 +1,192 @@
 <template>
   <div
-    ref="nodeRef"
     :class="[
-      'workflow-node relative group transition-all duration-200 cursor-grab active:cursor-grabbing',
-      'min-w-[200px] max-w-[280px]',
-      nodeTypeClass,
-      { 'selected': selected, 'dragging': dragging }
+      'workflow-node',
+      'bg-white',
+      'border-2',
+      'rounded-lg',
+      'shadow-lg',
+      'min-w-[280px]',
+      'relative',
+      'transition-all',
+      'duration-200',
+      'hover:shadow-xl',
+      {
+        'border-blue-500': selected,
+        'border-gray-300': !selected,
+        'opacity-50': dragging,
+        'cursor-grabbing': dragging,
+        'cursor-grab': !dragging
+      }
     ]"
-    :style="nodeStyle"
-    @mousedown="handleMouseDown"
-    @mouseenter="handleMouseEnter"
-    @mouseleave="handleMouseLeave"
-    @click="handleClick"
-    @contextmenu="handleContextMenu"
-    tabindex="0"
-    role="button"
-    :aria-label="`${data.label} node`"
-    @keydown="handleKeyDown"
+    @click="$emit('configure', { nodeId: id })"
   >
-    <!-- Input Ports -->
-    <div class="absolute left-0 top-0 bottom-0 flex flex-col justify-center">
-      <div
-        v-for="(input, index) in data.inputs"
-        :key="`input-${input.id}`"
-        class="relative"
-        :style="{ top: `${(index + 1) * (100 / (data.inputs.length + 1))}%` }"
-      >
+    <!-- Node Header -->
+    <div class="flex items-center justify-between p-3 border-b border-gray-200">
+      <div class="flex items-center space-x-2">
         <div
           :class="[
-            'workflow-handle absolute left-[-8px] transform -translate-y-1/2',
-            'flex items-center justify-center',
-            { 'valid-target': isConnecting && isValidConnection(input) }
+            'w-3 h-3 rounded-full',
+            getNodeTypeColor(data.type)
           ]"
-          :data-port-id="input.id"
-          :data-port-direction="'input'"
-          @mousedown.stop="startConnection('input', input)"
-          @mouseenter="showPortTooltip(input, $event)"
-          @mouseleave="hidePortTooltip"
-          :title="`${input.label} (${input.type})`"
-          role="button"
-          tabindex="0"
-          :aria-label="`Connect to ${input.label}`"
-        >
-          <div class="w-2 h-2 bg-current rounded-full"></div>
+        ></div>
+        <span class="text-sm font-medium text-gray-900">{{ data.label }}</span>
+      </div>
+      
+      <div class="flex items-center space-x-1">
+        <!-- Status Indicator -->
+        <div
+          :class="[
+            'w-2 h-2 rounded-full',
+            getStatusColor(data.status)
+          ]"
+        ></div>
+        
+        <!-- Node Actions -->
+        <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            @click.stop="$emit('duplicate', { nodeId: id })"
+            class="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+            title="Duplicate"
+          >
+            <Copy class="w-3 h-3" />
+          </button>
+          <button
+            @click.stop="$emit('delete', { nodeId: id })"
+            class="p-1 text-gray-400 hover:text-red-600 transition-colors"
+            title="Delete"
+          >
+            <Trash2 class="w-3 h-3" />
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- Node Content -->
-    <div class="p-4 text-white">
-      <!-- Header -->
-      <div class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-2">
-          <component :is="nodeIcon" class="w-4 h-4" />
-          <h3 class="font-semibold text-sm leading-tight">{{ data.label }}</h3>
+    <!-- Node Body -->
+    <div class="p-3">
+      <div class="text-xs text-gray-500 mb-2">
+        {{ getNodeTypeDescription(data.type) }}
+      </div>
+      
+      <!-- Node Configuration Preview -->
+      <div v-if="data.type === 'trigger'" class="text-xs text-gray-600">
+        <div v-if="data.config?.trigger_type" class="flex items-center space-x-1">
+          <span class="font-medium">Type:</span>
+          <span class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+            {{ data.config.trigger_type }}
+          </span>
         </div>
-        <div class="flex items-center gap-1">
-          <component :is="statusIcon" :class="statusIconClass" />
+      </div>
+      
+      <div v-else-if="data.type === 'action'" class="text-xs text-gray-600">
+        <div v-if="data.config?.action_type" class="flex items-center space-x-1">
+          <span class="font-medium">Action:</span>
+          <span class="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+            {{ data.config.action_type }}
+          </span>
         </div>
       </div>
-
-      <!-- Badge -->
-      <div class="flex items-center gap-2 mb-2">
-        <span class="px-2 py-1 bg-white/20 rounded-md text-xs font-medium">
-          {{ data.type }}
-        </span>
-        <span v-if="data.status !== 'idle'" class="px-2 py-1 bg-white/20 rounded-md text-xs">
-          {{ data.status }}
-        </span>
+      
+      <div v-else-if="data.type === 'condition'" class="text-xs text-gray-600">
+        <div v-if="data.config?.condition_type" class="flex items-center space-x-1">
+          <span class="font-medium">Logic:</span>
+          <span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">
+            {{ data.config.condition_type }}
+          </span>
+        </div>
       </div>
+    </div>
 
-      <!-- Description -->
-      <p v-if="data.description" class="text-xs text-white/80 leading-relaxed">
-        {{ data.description }}
-      </p>
-
-      <!-- Port Summary -->
-      <div class="flex items-center justify-between text-xs text-white/60 mt-2">
-        <span>{{ data.inputs.length }} inputs</span>
-        <span>{{ data.outputs.length }} outputs</span>
-      </div>
+    <!-- Input Ports -->
+    <div
+      v-if="data.inputs && data.inputs.length > 0"
+      class="absolute left-0 top-1/2 transform -translate-y-1/2 -translate-x-2"
+    >
+      <div
+        v-for="input in data.inputs"
+        :key="input.id"
+        :data-port-id="input.id"
+        :data-port-direction="'input'"
+        :class="[
+          'workflow-handle',
+          'workflow-handle-input',
+          'border-blue-500',
+          'hover:bg-blue-500',
+          'hover:border-blue-600',
+          {
+            'bg-blue-500': isConnecting && canConnectTo(input),
+            'bg-white': !isConnecting || !canConnectTo(input)
+          }
+        ]"
+        @mousedown.stop="handlePortMouseDown($event, input, 'input')"
+        @mouseup.stop="handlePortMouseUp($event, input, 'input')"
+        :title="input.label"
+      ></div>
     </div>
 
     <!-- Output Ports -->
-    <div class="absolute right-0 top-0 bottom-0 flex flex-col justify-center">
+    <div
+      v-if="data.outputs && data.outputs.length > 0"
+      class="absolute right-0 top-1/2 transform -translate-y-1/2 translate-x-2"
+    >
+      <div
+        v-for="output in data.outputs"
+        :key="output.id"
+        :data-port-id="output.id"
+        :data-port-direction="'output'"
+        :class="[
+          'workflow-handle',
+          'workflow-handle-output',
+          'border-green-500',
+          'hover:bg-green-500',
+          'hover:border-green-600',
+          {
+            'bg-green-500': isConnecting && canConnectFrom(output),
+            'bg-white': !isConnecting || !canConnectFrom(output)
+          }
+        ]"
+        @mousedown.stop="handlePortMouseDown($event, output, 'output')"
+        @mouseup.stop="handlePortMouseUp($event, output, 'output')"
+        :title="output.label"
+      ></div>
+    </div>
+
+    <!-- Special handling for condition nodes with multiple outputs -->
+    <div
+      v-if="data.type === 'condition' && data.outputs && data.outputs.length > 1"
+      class="absolute right-0 transform -translate-y-1/2 translate-x-2"
+      :style="{ top: '50%' }"
+    >
       <div
         v-for="(output, index) in data.outputs"
-        :key="`output-${output.id}`"
-        class="relative"
-        :style="{ top: `${(index + 1) * (100 / (data.outputs.length + 1))}%` }"
-      >
-        <div
-          :class="[
-            'workflow-handle absolute right-[-8px] transform -translate-y-1/2',
-            'flex items-center justify-center',
-            { 'valid-target': isConnecting && isValidConnection(output) }
-          ]"
-          :data-port-id="output.id"
-          :data-port-direction="'output'"
-          @mousedown.stop="startConnection('output', output)"
-          @mouseenter="showPortTooltip(output, $event)"
-          @mouseleave="hidePortTooltip"
-          :title="`${output.label} (${output.type})`"
-          role="button"
-          tabindex="0"
-          :aria-label="`Connect from ${output.label}`"
-        >
-          <div class="w-2 h-2 bg-current rounded-full"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Node Actions (visible on hover/select) -->
-    <div
-      v-if="selected || isHovered"
-      class="absolute -top-10 left-1/2 transform -translate-x-1/2 flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-2 py-1 shadow-lg z-10"
-    >
-      <button
-        @click.stop="configureNode"
-        class="p-1 hover:bg-gray-100 rounded transition-colors"
-        title="Configure"
-        aria-label="Configure node"
-      >
-        <Settings class="w-3 h-3 text-gray-600" />
-      </button>
-      <button
-        @click.stop="duplicateNode"
-        class="p-1 hover:bg-gray-100 rounded transition-colors"
-        title="Duplicate"
-        aria-label="Duplicate node"
-      >
-        <Copy class="w-3 h-3 text-gray-600" />
-      </button>
-      <button
-        @click.stop="deleteNode"
-        class="p-1 hover:bg-red-50 rounded transition-colors"
-        title="Delete"
-        aria-label="Delete node"
-      >
-        <Trash2 class="w-3 h-3 text-red-600" />
-      </button>
-    </div>
-
-    <!-- Port Tooltip -->
-    <div
-      v-if="portTooltip.show"
-      :class="[
-        'workflow-tooltip',
-        { 'show': portTooltip.show }
-      ]"
-      :style="portTooltip.style"
-    >
-      <div class="font-medium">{{ portTooltip.data?.label }}</div>
-      <div class="text-xs opacity-80">{{ portTooltip.data?.type }}</div>
-      <div v-if="portTooltip.data?.description" class="text-xs opacity-60 mt-1">
-        {{ portTooltip.data.description }}
-      </div>
+        :key="output.id"
+        :data-port-id="output.id"
+        :data-port-direction="'output'"
+        :class="[
+          'workflow-handle',
+          'workflow-handle-output',
+          'border-green-500',
+          'hover:bg-green-500',
+          'hover:border-green-600',
+          {
+            'bg-green-500': isConnecting && canConnectFrom(output),
+            'bg-white': !isConnecting || !canConnectFrom(output)
+          }
+        ]"
+        :style="{
+          top: `${50 + (index - (data.outputs.length - 1) / 2) * 20}%`,
+          position: 'absolute'
+        }"
+        @mousedown.stop="handlePortMouseDown($event, output, 'output')"
+        @mouseup.stop="handlePortMouseUp($event, output, 'output')"
+        :title="output.label"
+      ></div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import {
-  Play,
-  Zap,
-  GitBranch,
-  Code,
-  Globe,
-  Settings,
-  Copy,
-  Trash2,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  Loader
-} from 'lucide-vue-next'
+import { Copy, Trash2 } from 'lucide-vue-next'
 
 const props = defineProps({
   id: {
@@ -201,233 +212,105 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-  'node-click',
-  'node-context-menu',
   'start-connection',
   'configure',
   'duplicate',
   'delete'
 ])
 
-const nodeRef = ref(null)
-const isHovered = ref(false)
-const portTooltip = ref({
-  show: false,
-  data: null,
-  style: {}
-})
-
-// Node type styling
-const nodeTypeClass = computed(() => {
-  const typeMap = {
-    trigger: 'node-trigger',
-    action: 'node-action',
-    condition: 'node-condition',
-    transformer: 'node-transformer',
-    webhook: 'node-webhook'
-  }
-  return typeMap[props.data.type] || 'node-action'
-})
-
-// Node icon
-const nodeIcon = computed(() => {
-  const iconMap = {
-    trigger: Play,
-    action: Zap,
-    condition: GitBranch,
-    transformer: Code,
-    webhook: Globe
-  }
-  return iconMap[props.data.type] || Zap
-})
-
-// Status icon
-const statusIcon = computed(() => {
-  const statusMap = {
-    idle: AlertCircle,
-    running: Loader,
-    success: CheckCircle,
-    error: XCircle
-  }
-  return statusMap[props.data.status] || AlertCircle
-})
-
-const statusIconClass = computed(() => {
-  const statusMap = {
-    idle: 'text-white/60',
-    running: 'text-white animate-spin',
-    success: 'text-green-300',
-    error: 'text-red-300'
-  }
-  return statusMap[props.data.status] || 'text-white/60'
-})
-
-// Node style with gradient
-const nodeStyle = computed(() => {
-  const gradients = {
-    trigger: 'linear-gradient(135deg, #2ECC71 0%, #27AE60 100%)',
-    action: 'linear-gradient(135deg, #377DFF 0%, #2563EB 100%)',
-    condition: 'linear-gradient(135deg, #F4D03F 0%, #F39C12 100%)',
-    transformer: 'linear-gradient(135deg, #8E44AD 0%, #9B59B6 100%)',
-    webhook: 'linear-gradient(135deg, #E74C3C 0%, #C0392B 100%)'
-  }
-  
-  return {
-    background: gradients[props.data.type] || gradients.action,
-    border: `2px solid ${getNodeBorderColor(props.data.type)}`
-  }
-})
-
-function getNodeBorderColor(type) {
+const getNodeTypeColor = (type) => {
   const colors = {
-    trigger: '#2ECC71',
-    action: '#377DFF',
-    condition: '#F4D03F',
-    transformer: '#8E44AD',
-    webhook: '#E74C3C'
+    trigger: 'bg-green-500',
+    action: 'bg-blue-500',
+    condition: 'bg-yellow-500',
+    transformer: 'bg-purple-500',
+    webhook: 'bg-red-500'
   }
-  return colors[type] || colors.action
+  return colors[type] || 'bg-gray-500'
 }
 
-// Event handlers
-const handleMouseDown = (event) => {
-  if (event.button === 0) { // Left click
-    emit('node-click', { nodeId: props.id, event })
+const getStatusColor = (status) => {
+  const colors = {
+    idle: 'bg-gray-400',
+    running: 'bg-blue-500',
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    completed: 'bg-green-500',
+    failed: 'bg-red-500'
   }
+  return colors[status] || 'bg-gray-400'
 }
 
-const handleMouseEnter = () => {
-  isHovered.value = true
-}
-
-const handleMouseLeave = () => {
-  isHovered.value = false
-  hidePortTooltip()
-}
-
-const handleClick = (event) => {
-  emit('node-click', { nodeId: props.id, event })
-}
-
-const handleContextMenu = (event) => {
-  event.preventDefault()
-  emit('node-context-menu', { nodeId: props.id, event })
-}
-
-const handleKeyDown = (event) => {
-  switch (event.key) {
-    case 'Enter':
-      event.preventDefault()
-      configureNode()
-      break
-    case 'Delete':
-    case 'Backspace':
-      event.preventDefault()
-      deleteNode()
-      break
-    case 'Escape':
-      event.preventDefault()
-      // Cancel any ongoing operations
-      break
+const getNodeTypeDescription = (type) => {
+  const descriptions = {
+    trigger: 'Starts the workflow',
+    action: 'Performs an action',
+    condition: 'Makes decisions',
+    transformer: 'Transforms data',
+    webhook: 'External trigger'
   }
+  return descriptions[type] || 'Workflow node'
 }
 
-// Connection handling
-const startConnection = (direction, port) => {
-  emit('start-connection', {
-    nodeId: props.id,
-    portId: port.id,
-    direction,
-    port
-  })
-}
-
-const isValidConnection = (port) => {
-  // For now, allow all connections from output to input
-  // In the future, this could check port types, data types, etc.
+const canConnectTo = (input) => {
+  // For now, allow all connections
+  // In a real implementation, you'd check port types, etc.
   return true
 }
 
-// Port tooltip
-const showPortTooltip = (port, event) => {
-  const rect = event.target.getBoundingClientRect()
-  portTooltip.value = {
-    show: true,
-    data: port,
-    style: {
-      left: `${rect.left + rect.width / 2}px`,
-      top: `${rect.top - 10}px`,
-      transform: 'translate(-50%, -100%)'
-    }
-  }
+const canConnectFrom = (output) => {
+  // For now, allow all connections
+  // In a real implementation, you'd check port types, etc.
+  return true
 }
 
-const hidePortTooltip = () => {
-  portTooltip.value.show = false
-}
-
-// Node actions
-const configureNode = () => {
-  emit('configure', { nodeId: props.id })
-}
-
-const duplicateNode = () => {
-  emit('duplicate', { nodeId: props.id })
-}
-
-const deleteNode = () => {
-  emit('delete', { nodeId: props.id })
-}
-
-// Focus management
-onMounted(() => {
-  if (nodeRef.value) {
-    nodeRef.value.addEventListener('focus', () => {
-      // Handle focus
+const handlePortMouseDown = (event, port, direction) => {
+  if (direction === 'output') {
+    emit('start-connection', {
+      nodeId: props.id,
+      portId: port.id,
+      direction,
+      port
     })
   }
-})
+}
 
-onUnmounted(() => {
-  if (nodeRef.value) {
-    nodeRef.value.removeEventListener('focus', () => {
-      // Cleanup
-    })
-  }
-})
+const handlePortMouseUp = (event, port, direction) => {
+  // This will be handled by the parent component
+  // The parent listens for mouseup events on the canvas
+}
 </script>
 
 <style scoped>
 .workflow-node {
-  user-select: none;
-}
-
-.workflow-node:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px rgb(108 92 231 / 0.6);
+  min-height: 120px;
 }
 
 .workflow-handle {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
   z-index: 10;
 }
 
-.workflow-handle:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px rgb(108 92 231 / 0.6);
+.workflow-handle:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.1);
 }
 
-/* Springy drop animation */
-.workflow-node.dragging {
-  transform: scale(1.05) rotate(2deg);
-  transition: transform 0.1s ease;
+.workflow-handle-input {
+  left: -8px;
 }
 
-.workflow-node:not(.dragging) {
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+.workflow-handle-output {
+  right: -8px;
 }
 
-/* Magnetic snapping visual feedback */
-.workflow-node.snapping {
-  box-shadow: 0 0 0 4px rgb(108 92 231 / 0.3);
+.workflow-node:hover .opacity-0 {
+  opacity: 1;
 }
 </style>

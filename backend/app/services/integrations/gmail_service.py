@@ -11,7 +11,7 @@ from googleapiclient.errors import HttpError
 from sqlalchemy.orm import Session
 from app.services.integrations.base_integration import BaseIntegration, integration_registry
 from app.models.integration import Integration, OAuthToken
-from app.models.workflow_node import WorkflowNode
+from app.models.workflow import WorkflowNode
 
 
 class GmailService(BaseIntegration):

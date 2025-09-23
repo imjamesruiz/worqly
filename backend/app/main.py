@@ -4,7 +4,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import init_db
-from app.routers import auth, workflows, integrations, executions, oauth, password_reset, workflow_execution, webhooks
+from app.routers import auth, workflows, integrations, executions, oauth, password_reset, workflow_execution, webhooks, verification
 import logging
 from typing import List
 from contextlib import asynccontextmanager
@@ -71,7 +71,9 @@ app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
 app.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
 app.include_router(executions.router, prefix="/executions", tags=["executions"])
 app.include_router(oauth.router, prefix="/oauth", tags=["oauth"])
-app.include_router(password_reset.router, prefix="/password-reset", tags=["password-reset"])
+# Verification and password reset endpoints at root level for cleaner API
+app.include_router(verification.router, prefix="", tags=["verification"])
+app.include_router(password_reset.router, prefix="", tags=["password-reset"])
 
 
 # Basic request logging

@@ -1,148 +1,102 @@
-"""
-Webhook endpoints for Worqly workflow triggers
-"""
-
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+from typing import Dict, Any
+import json
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
-from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.workflow import Workflow, WorkflowTrigger
-from app.core.tasks import trigger_workflow
-from app.tasks.http_tasks import webhook_trigger
+from app.models.workflow import Workflow, WorkflowNode, WorkflowConnection
+from app.models.execution import WorkflowExecution, ExecutionStatus
+from app.services.workflow_engine import WorkflowEngine
+from app.core.tasks import execute_workflow
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 
 
 @router.post("/{webhook_id}")
-async def webhook_endpoint(
+async def receive_webhook(
     webhook_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """
-    Generic webhook endpoint for triggering workflows
-    
-    Args:
-        webhook_id: Webhook identifier
-        request: HTTP request
-        background_tasks: FastAPI background tasks
-        db: Database session
-        
-    Returns:
-        Webhook response
-    """
+    """Receive webhook and trigger workflows"""
     try:
         # Get request data
-        body = await request.body()
+        content_type = request.headers.get("content-type", "")
+        
+        if "application/json" in content_type:
+            body = await request.json()
+        else:
+            body = await request.body()
+            try:
+                body = json.loads(body.decode())
+            except:
+                body = {"raw_data": body.decode()}
+        
+        # Get headers
         headers = dict(request.headers)
-        query_params = dict(request.query_params)
         
-        # Try to parse JSON body
-        try:
-            import json
-            body_data = json.loads(body.decode('utf-8')) if body else {}
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            body_data = {"raw_body": body.decode('utf-8', errors='ignore')}
-        
-        # Prepare webhook data
+        # Create webhook data
         webhook_data = {
+            "webhook_id": webhook_id,
             "method": request.method,
             "headers": headers,
-            "body": body_data,
-            "query_params": query_params,
-            "path": str(request.url.path),
-            "timestamp": datetime.utcnow().isoformat()
+            "body": body,
+            "timestamp": datetime.utcnow().isoformat(),
+            "query_params": dict(request.query_params)
         }
         
-        # Find workflow with this webhook
-        workflow = db.query(Workflow).join(WorkflowTrigger).filter(
-            WorkflowTrigger.config['webhook_id'].astext == webhook_id,
+        # Find workflows that use this webhook
+        workflows = db.query(Workflow).join(WorkflowNode).filter(
+            WorkflowNode.node_type == "webhook",
+            WorkflowNode.config.op('->>')('webhook_id') == webhook_id,
             Workflow.is_active == True
-        ).first()
+        ).all()
         
-        if not workflow:
-            raise HTTPException(status_code=404, detail="Webhook not found or workflow inactive")
+        if not workflows:
+            raise HTTPException(status_code=404, detail="No active workflows found for this webhook")
         
-        # Trigger workflow execution
-        background_tasks.add_task(
-            trigger_workflow.delay,
-            workflow.id,
-            "webhook",
-            webhook_data
-        )
+        # Execute workflows
+        execution_results = []
+        for workflow in workflows:
+            try:
+                # Create execution record
+                execution_id = str(uuid.uuid4())
+                execution = WorkflowExecution(
+                    workflow_id=workflow.id,
+                    execution_id=execution_id,
+                    status=ExecutionStatus.PENDING,
+                    trigger_data=webhook_data,
+                    started_at=datetime.utcnow()
+                )
+                db.add(execution)
+                db.commit()
+                
+                # Execute workflow asynchronously
+                task = execute_workflow.delay(workflow.id, webhook_data, False)
+                
+                execution_results.append({
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "execution_id": execution_id,
+                    "task_id": task.id,
+                    "status": "started"
+                })
+                
+            except Exception as e:
+                execution_results.append({
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "error": str(e),
+                    "status": "failed"
+                })
         
         return {
-            "status": "accepted",
+            "success": True,
             "webhook_id": webhook_id,
-            "workflow_id": workflow.id,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/{webhook_id}")
-async def webhook_get_endpoint(
-    webhook_id: str,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """
-    GET webhook endpoint for triggering workflows
-    
-    Args:
-        webhook_id: Webhook identifier
-        request: HTTP request
-        background_tasks: FastAPI background tasks
-        db: Database session
-        
-    Returns:
-        Webhook response
-    """
-    try:
-        # Get request data
-        headers = dict(request.headers)
-        query_params = dict(request.query_params)
-        
-        # Prepare webhook data
-        webhook_data = {
-            "method": request.method,
-            "headers": headers,
-            "body": {},
-            "query_params": query_params,
-            "path": str(request.url.path),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        # Find workflow with this webhook
-        workflow = db.query(Workflow).join(WorkflowTrigger).filter(
-            WorkflowTrigger.config['webhook_id'].astext == webhook_id,
-            Workflow.is_active == True
-        ).first()
-        
-        if not workflow:
-            raise HTTPException(status_code=404, detail="Webhook not found or workflow inactive")
-        
-        # Trigger workflow execution
-        background_tasks.add_task(
-            trigger_workflow.delay,
-            workflow.id,
-            "webhook",
-            webhook_data
-        )
-        
-        return {
-            "status": "accepted",
-            "webhook_id": webhook_id,
-            "workflow_id": workflow.id,
-            "timestamp": datetime.utcnow().isoformat()
+            "workflows_triggered": len(execution_results),
+            "executions": execution_results
         }
         
     except Exception as e:
@@ -150,69 +104,97 @@ async def webhook_get_endpoint(
 
 
 @router.post("/gmail/{webhook_id}")
-async def gmail_webhook_endpoint(
+async def receive_gmail_webhook(
     webhook_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """
-    Gmail-specific webhook endpoint
-    
-    Args:
-        webhook_id: Webhook identifier
-        request: HTTP request
-        background_tasks: FastAPI background tasks
-        db: Database session
-        
-    Returns:
-        Webhook response
-    """
+    """Receive Gmail webhook (Google Pub/Sub format)"""
     try:
-        # Get request data
-        body = await request.body()
-        headers = dict(request.headers)
+        # Gmail webhooks come as Pub/Sub messages
+        body = await request.json()
         
-        # Parse Gmail webhook data
-        try:
-            import json
-            body_data = json.loads(body.decode('utf-8')) if body else {}
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            body_data = {"raw_body": body.decode('utf-8', errors='ignore')}
+        # Decode the Pub/Sub message
+        if "message" in body:
+            message = body["message"]
+            data = message.get("data", "")
+            
+            # Decode base64 data if present
+            if data:
+                import base64
+                try:
+                    decoded_data = base64.b64decode(data).decode()
+                    gmail_data = json.loads(decoded_data)
+                except:
+                    gmail_data = {"raw_data": data}
+            else:
+                gmail_data = {}
+            
+            webhook_data = {
+                "webhook_id": webhook_id,
+                "provider": "gmail",
+                "message_id": message.get("messageId"),
+                "data": gmail_data,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        else:
+            webhook_data = {
+                "webhook_id": webhook_id,
+                "provider": "gmail",
+                "data": body,
+                "timestamp": datetime.utcnow().isoformat()
+            }
         
-        # Prepare Gmail-specific webhook data
-        webhook_data = {
-            "service": "gmail",
-            "method": request.method,
-            "headers": headers,
-            "body": body_data,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        # Find workflow with this Gmail webhook
-        workflow = db.query(Workflow).join(WorkflowTrigger).filter(
-            WorkflowTrigger.config['webhook_id'].astext == webhook_id,
-            WorkflowTrigger.trigger_type == "gmail",
+        # Find Gmail workflows
+        workflows = db.query(Workflow).join(WorkflowNode).filter(
+            WorkflowNode.node_type == "trigger",
+            WorkflowNode.config.op('->>')('trigger_type') == "gmail",
+            WorkflowNode.config.op('->>')('webhook_id') == webhook_id,
             Workflow.is_active == True
-        ).first()
+        ).all()
         
-        if not workflow:
-            raise HTTPException(status_code=404, detail="Gmail webhook not found or workflow inactive")
+        if not workflows:
+            raise HTTPException(status_code=404, detail="No active Gmail workflows found")
         
-        # Trigger workflow execution
-        background_tasks.add_task(
-            trigger_workflow.delay,
-            workflow.id,
-            "gmail_webhook",
-            webhook_data
-        )
+        # Execute workflows
+        execution_results = []
+        for workflow in workflows:
+            try:
+                execution_id = str(uuid.uuid4())
+                execution = WorkflowExecution(
+                    workflow_id=workflow.id,
+                    execution_id=execution_id,
+                    status=ExecutionStatus.PENDING,
+                    trigger_data=webhook_data,
+                    started_at=datetime.utcnow()
+                )
+                db.add(execution)
+                db.commit()
+                
+                task = execute_workflow.delay(workflow.id, webhook_data, False)
+                
+                execution_results.append({
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "execution_id": execution_id,
+                    "task_id": task.id,
+                    "status": "started"
+                })
+                
+            except Exception as e:
+                execution_results.append({
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "error": str(e),
+                    "status": "failed"
+                })
         
         return {
-            "status": "accepted",
+            "success": True,
             "webhook_id": webhook_id,
-            "workflow_id": workflow.id,
-            "service": "gmail",
-            "timestamp": datetime.utcnow().isoformat()
+            "provider": "gmail",
+            "workflows_triggered": len(execution_results),
+            "executions": execution_results
         }
         
     except Exception as e:
@@ -220,85 +202,115 @@ async def gmail_webhook_endpoint(
 
 
 @router.post("/slack/{webhook_id}")
-async def slack_webhook_endpoint(
+async def receive_slack_webhook(
     webhook_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """
-    Slack-specific webhook endpoint
-    
-    Args:
-        webhook_id: Webhook identifier
-        request: HTTP request
-        background_tasks: FastAPI background tasks
-        db: Database session
-        
-    Returns:
-        Webhook response
-    """
+    """Receive Slack webhook"""
     try:
-        # Get request data
-        body = await request.body()
+        body = await request.json()
         headers = dict(request.headers)
         
-        # Parse Slack webhook data
-        try:
-            import json
-            body_data = json.loads(body.decode('utf-8')) if body else {}
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            body_data = {"raw_body": body.decode('utf-8', errors='ignore')}
-        
-        # Prepare Slack-specific webhook data
         webhook_data = {
-            "service": "slack",
-            "method": request.method,
+            "webhook_id": webhook_id,
+            "provider": "slack",
             "headers": headers,
-            "body": body_data,
+            "body": body,
             "timestamp": datetime.utcnow().isoformat()
         }
         
-        # Find workflow with this Slack webhook
-        workflow = db.query(Workflow).join(WorkflowTrigger).filter(
-            WorkflowTrigger.config['webhook_id'].astext == webhook_id,
-            WorkflowTrigger.trigger_type == "slack",
+        # Find Slack workflows
+        workflows = db.query(Workflow).join(WorkflowNode).filter(
+            WorkflowNode.node_type == "trigger",
+            WorkflowNode.config.op('->>')('trigger_type') == "slack",
+            WorkflowNode.config.op('->>')('webhook_id') == webhook_id,
             Workflow.is_active == True
-        ).first()
+        ).all()
         
-        if not workflow:
-            raise HTTPException(status_code=404, detail="Slack webhook not found or workflow inactive")
+        if not workflows:
+            raise HTTPException(status_code=404, detail="No active Slack workflows found")
         
-        # Trigger workflow execution
-        background_tasks.add_task(
-            trigger_workflow.delay,
-            workflow.id,
-            "slack_webhook",
-            webhook_data
-        )
+        # Execute workflows
+        execution_results = []
+        for workflow in workflows:
+            try:
+                execution_id = str(uuid.uuid4())
+                execution = WorkflowExecution(
+                    workflow_id=workflow.id,
+                    execution_id=execution_id,
+                    status=ExecutionStatus.PENDING,
+                    trigger_data=webhook_data,
+                    started_at=datetime.utcnow()
+                )
+                db.add(execution)
+                db.commit()
+                
+                task = execute_workflow.delay(workflow.id, webhook_data, False)
+                
+                execution_results.append({
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "execution_id": execution_id,
+                    "task_id": task.id,
+                    "status": "started"
+                })
+                
+            except Exception as e:
+                execution_results.append({
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "error": str(e),
+                    "status": "failed"
+                })
         
         return {
-            "status": "accepted",
+            "success": True,
             "webhook_id": webhook_id,
-            "workflow_id": workflow.id,
-            "service": "slack",
-            "timestamp": datetime.utcnow().isoformat()
+            "provider": "slack",
+            "workflows_triggered": len(execution_results),
+            "executions": execution_results
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/health")
-async def webhook_health_check():
-    """
-    Health check endpoint for webhooks
-    
-    Returns:
-        Health status
-    """
-    return {
-        "status": "healthy",
-        "service": "webhooks",
-        "timestamp": datetime.utcnow().isoformat()
-    }
+@router.get("/{webhook_id}/status")
+async def get_webhook_status(
+    webhook_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get webhook status and recent executions"""
+    try:
+        # Find workflows using this webhook
+        workflows = db.query(Workflow).join(WorkflowNode).filter(
+            WorkflowNode.config.op('->>')('webhook_id') == webhook_id
+        ).all()
+        
+        if not workflows:
+            raise HTTPException(status_code=404, detail="No workflows found for this webhook")
+        
+        # Get recent executions
+        recent_executions = db.query(WorkflowExecution).filter(
+            WorkflowExecution.workflow_id.in_([w.id for w in workflows])
+        ).order_by(WorkflowExecution.created_at.desc()).limit(10).all()
+        
+        return {
+            "webhook_id": webhook_id,
+            "active_workflows": len([w for w in workflows if w.is_active]),
+            "total_workflows": len(workflows),
+            "recent_executions": [
+                {
+                    "execution_id": exec.execution_id,
+                    "workflow_id": exec.workflow_id,
+                    "status": exec.status.value,
+                    "started_at": exec.started_at.isoformat() if exec.started_at else None,
+                    "completed_at": exec.completed_at.isoformat() if exec.completed_at else None
+                }
+                for exec in recent_executions
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

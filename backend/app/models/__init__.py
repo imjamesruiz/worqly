@@ -4,6 +4,7 @@ from .integration import Integration, OAuthToken
 from .execution import WorkflowExecution, ExecutionLog
 from .jwt_token import JWTToken
 from .password_reset import PasswordResetToken
+from .verification_token import VerificationToken
 
 __all__ = [
     "User",
@@ -15,5 +16,6 @@ __all__ = [
     "WorkflowExecution",
     "ExecutionLog",
     "JWTToken",
-    "PasswordResetToken"
+    "PasswordResetToken",
+    "VerificationToken"
 ] 

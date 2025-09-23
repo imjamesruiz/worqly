@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.password_reset import (
@@ -9,16 +9,42 @@ from app.schemas.password_reset import (
     PasswordResetTokenResponse
 )
 from app.services.password_reset_service import PasswordResetService
+import time
 
 router = APIRouter()
 
+# Rate limiting for password reset attempts
+PASSWORD_RESET_ATTEMPTS: dict[str, list[int]] = {}
+RESET_RATE_LIMIT_WINDOW_SECONDS = 300  # 5 minutes
+RESET_RATE_LIMIT_MAX_ATTEMPTS = 3  # Max 3 attempts per 5 minutes
 
-@router.post("/request", response_model=PasswordResetResponse)
-def request_password_reset(
+def _cleanup_reset_attempts(bucket: dict[str, list[int]], now_ts: int):
+    cutoff = now_ts - RESET_RATE_LIMIT_WINDOW_SECONDS
+    for key, timestamps in list(bucket.items()):
+        bucket[key] = [t for t in timestamps if t >= cutoff]
+        if not bucket[key]:
+            bucket.pop(key, None)
+
+def _check_reset_rate_limit(bucket: dict[str, list[int]], key: str, now_ts: int):
+    _cleanup_reset_attempts(bucket, now_ts)
+    timestamps = bucket.setdefault(key, [])
+    if len(timestamps) >= RESET_RATE_LIMIT_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many password reset attempts. Please wait 5 minutes before trying again.")
+    timestamps.append(now_ts)
+
+
+@router.post("/forgot-password", response_model=PasswordResetResponse)
+def forgot_password(
     request: PasswordResetRequest,
+    request_obj: Request,
     db: Session = Depends(get_db)
 ):
     """Request a password reset email"""
+    now_ts = int(time.time())
+    
+    # Rate limiting for password reset requests
+    _check_reset_rate_limit(PASSWORD_RESET_ATTEMPTS, request.email, now_ts)
+    
     try:
         success = PasswordResetService.send_reset_email(db, request.email)
         
@@ -74,12 +100,12 @@ def verify_reset_code(
         )
 
 
-@router.post("/confirm", response_model=PasswordResetResponse)
-def confirm_password_reset(
+@router.post("/reset-password", response_model=PasswordResetResponse)
+def reset_password(
     request: PasswordResetConfirm,
     db: Session = Depends(get_db)
 ):
-    """Confirm password reset with new password"""
+    """Reset password with new password"""
     try:
         # Validate passwords match
         if request.new_password != request.confirm_password:
